@@ -6,13 +6,6 @@ from typing import Any
 
 
 class ClaustumMemory:
-    """
-    Persistent memory for Claustrum.
-    Survives restarts. Grows forever.
-    Stored locally — never leaves the machine.
-    Each person who runs Claustrum gets their own.
-    """
-
     def __init__(self, memory_path: str | None = None) -> None:
         self.path = memory_path or self._default_path()
         self._ensure_dir()
@@ -22,28 +15,28 @@ class ClaustumMemory:
         self._data["observations"].append({
             "time": self._now(), "text": text
         })
-        self._trim("observations", 500)
+        self._trim("observations", 150) # Reduced from 500 to lower disk storage overhead
         self._write()
 
     def save_thought(self, text: str, tick: int) -> None:
         self._data["thoughts"].append({
             "time": self._now(), "tick": tick, "text": text
         })
-        self._trim("thoughts", 1000)
+        self._trim("thoughts", 300) # Reduced from 1000
         self._write()
 
     def save_conversation(self, role: str, text: str) -> None:
         self._data["conversations"].append({
             "time": self._now(), "role": role, "text": text
         })
-        self._trim("conversations", 2000)
+        self._trim("conversations", 500) # Reduced from 2000
         self._write()
 
     def save_pattern(self, text: str, confidence: float = 0.5) -> None:
         self._data["patterns"].append({
             "time": self._now(), "text": text, "confidence": confidence
         })
-        self._trim("patterns", 200)
+        self._trim("patterns", 50)
         self._write()
 
     def update_self_model(self, key: str, value: Any) -> None:
@@ -131,7 +124,8 @@ class ClaustumMemory:
     def _write(self) -> None:
         try:
             with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, indent=2, ensure_ascii=False)
+                # Removed formatting indents to minimize string processing and payload footprint
+                json.dump(self._data, f, ensure_ascii=False)
         except Exception as e:
             print(f"[CLAUSTRUM memory error: {e}]")
 
