@@ -38,8 +38,9 @@ class Heartbeat:
         self._last_thoughts: list[str] = []
 
         if self.memory:
-            self._observations = list(self.memory.recent_observations(20))
-            self._last_thoughts = list(self.memory.recent_thoughts(5))
+            # Drop lookback limits from 20/5 to 10/3 to shrink the input prompt token size
+            self._observations = list(self.memory.recent_observations(10))
+            self._last_thoughts = list(self.memory.recent_thoughts(3))
 
     def start(self) -> None:
         if self._running:
@@ -60,8 +61,7 @@ class Heartbeat:
                 msg = (
                     f"online. session {session}. "
                     f"{stats['observations']} observations, "
-                    f"{stats['thoughts']} thoughts, "
-                    f"{stats['conversations']} exchanges remembered."
+                    f"{stats['thoughts']} thoughts."
                 )
         else:
             msg = "online."
@@ -70,7 +70,7 @@ class Heartbeat:
     def stop(self) -> None:
         self._running = False
         if self._thread:
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=2)
         if self.memory:
             stats = self.memory.stats()
             self._print_tap(f"offline. {stats['thoughts']} thoughts total.")
@@ -89,8 +89,8 @@ class Heartbeat:
     def observe(self, text: str) -> None:
         ts = datetime.datetime.now().strftime("%H:%M")
         self._observations.append(f"[{ts}] {text}")
-        if len(self._observations) > 30:
-            self._observations = self._observations[-30:]
+        if len(self._observations) > 15:
+            self._observations = self._observations[-15:]
         if self.memory:
             self.memory.save_observation(text)
 
@@ -111,7 +111,10 @@ class Heartbeat:
             time.sleep(self.interval)
             if not self._running:
                 break
-            self._tick()
+            try:
+                self._tick()
+            except Exception as e:
+                self._print_tap(f"loop tick error: {e}")
 
     def _tick(self) -> None:
         self._tick_count += 1
@@ -119,14 +122,14 @@ class Heartbeat:
             try:
                 self.on_tick()
             except Exception as e:
-                self._print_tap(f"tick error: {e}")
+                self._print_tap(f"tick callback error: {e}")
 
         if self._tick_count % self._speak_every == 0:
             thought = self._generate_thought()
-            if thought and thought != "[silent]" and not thought.startswith("["):
+            if thought and not thought.startswith("["):
                 self._last_thoughts.append(thought)
-                if len(self._last_thoughts) > 10:
-                    self._last_thoughts = self._last_thoughts[-10:]
+                if len(self._last_thoughts) > 5:
+                    self._last_thoughts = self._last_thoughts[-5:]
                 if self.memory:
                     self.memory.save_thought(thought, self._tick_count)
                 self._print_tap(thought)
@@ -140,7 +143,7 @@ class Heartbeat:
         admin = "Admin"
         session = 1
         total = 0
-        patterns = "none yet"
+        patterns = "none"
 
         if self.memory:
             identity = self.memory.identity()
@@ -149,10 +152,10 @@ class Heartbeat:
             total = self.memory.stats()["thoughts"]
             p = self.memory.all_patterns()
             if p:
-                patterns = "\n".join(x["text"] for x in p[-4:])
+                patterns = "\n".join(x["text"] for x in p[-2:])
 
-        obs = "\n".join(self._observations[-10:]) or "none yet"
-        thoughts = "\n".join(self._last_thoughts[-3:]) or "none yet"
+        obs = "\n".join(self._observations[-5:]) or "none"
+        thoughts = "\n".join(self._last_thoughts[-2:]) or "none"
 
         prompt = HEARTBEAT_PROMPT.format(
             admin=admin,
@@ -170,17 +173,29 @@ class Heartbeat:
                 "model": self.ollama_model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.8, "num_predict": 80}
+                "options": {
+                    "temperature": 0.7, 
+                    "num_predict": 64,   
+                    "num_ctx": 2048,    
+                    "top_k": 20,
+                    "top_p": 0.9
+                }
             }).encode()
+            
             req = urllib.request.Request(
                 self.ollama_url, data=body,
                 headers={"Content-Type": "application/json"}
             )
-            with urllib.request.urlopen(req, timeout=60) as r:
+      
+            with urllib.request.urlopen(req, timeout=25) as r:
                 data = json.loads(r.read())
-            return data.get("response", "").strip()
+            
+            res = data.get("response", "").strip()
+            if res.lower() in ["[silent]", "silent", ""]:
+                return "[silent]"
+            return res
         except Exception as e:
-            return f"[error: {e}]"
+            return f"[timeout/error: {e}]"
 
     def _detect_patterns(self) -> None:
         try:
