@@ -10,6 +10,7 @@ TOOLS = {
     "file_list": "list files in a directory",
     "web_search": "search the web for current data",
     "calculate": "precise numerical calculation",
+    "browser_chrome": "open browser to use chatgpt, play youtube videos, or read whatsapp texts",
     "none": "no tool needed, regular conversation",
 }
 
@@ -33,11 +34,17 @@ class ToolExecutor:
     def route(self, user_input: str) -> dict:
         """
         Determine tool assignment.
-        Returns: {"tool": str, "plan": str, "needs_confirmation": bool}
+        Returns: {"tool": str, "action_type": str, "target_data": str, "plan": str, "needs_confirmation": bool}
         """
         tool_list = "\n".join(f"- {k}: {v}" for k, v in TOOLS.items())
 
-        prompt = f"""Available Tools:\n{tool_list}\n\nUser Input: "{user_input}"\n\nTask: Select the single best tool for the input. Respond ONLY with a valid JSON object matching this schema exactly, with no explanation or markdown wrappers:\n{{"tool": "name_or_none", "plan": "1-sentence strategy description", "needs_confirmation": true_or_false}}"""
+        # Updated prompt schema containing browser payload instructions
+        prompt = f"""Available Tools:\n{tool_list}
+
+User Input: "{user_input}"
+
+Task: Select the single best tool. If browser actions are required, use "browser_chrome". Respond ONLY with a valid JSON object matching this schema exactly, with no explanation or markdown wrappers:
+{{"tool": "tool_name_or_none", "action_type": "chatgpt_or_youtube_or_whatsapp_or_none", "target_data": "prompt_text_or_search_keyword_or_empty", "plan": "1-sentence strategy description", "needs_confirmation": true_or_false}}"""
 
         try:
             body = json.dumps({
@@ -46,7 +53,7 @@ class ToolExecutor:
                 "stream": False,
                 "options": {
                     "temperature": 0.1,    # Low temperature guarantees structural compliance
-                    "num_predict": 96,     # Restricts unnecessary token rambling 
+                    "num_predict": 128,    # Slightly increased to comfortably accommodate extra schema strings
                     "num_ctx": 2048        # Limits runtime context overhead
                 }
             }).encode()
@@ -70,4 +77,10 @@ class ToolExecutor:
 
         except Exception as e:
             # Safe programmatic fallback defaults to conversation instead of breaking the pipeline
-            return {"tool": "none", "plan": f"Routing fallback (Error: {e})", "needs_confirmation": False}
+            return {
+                "tool": "none", 
+                "action_type": "none", 
+                "target_data": "", 
+                "plan": f"Routing fallback (Error: {e})", 
+                "needs_confirmation": False
+            }
