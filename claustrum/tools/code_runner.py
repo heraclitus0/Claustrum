@@ -56,8 +56,7 @@ Rules:
             code = data.get("response", "").strip()
 
             # Robust Regex Parsing: Extracts the python block even if the model violates rules and uses markdown code blocks
-            match = re.search(r"```(?:python)?\s*(.*?)\s*
-```", code, re.DOTALL)
+            match = re.search(r"```(?:python)?\s*(.*?)\s*```", code, re.DOTALL)
             if match:
                 return match.group(1).strip()
                 
