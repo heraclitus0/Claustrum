@@ -1,0 +1,4 @@
+ollama
+# No other dependencies — Claustrum runs on stdlib + local LLM
+# Install ollama from https://ollama.com
+# Then: ollama pull llama3.2
