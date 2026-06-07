@@ -1,4 +1,9 @@
 ollama
+# Claustrum Core Dependencies
+# Runs on Python 3.8+
+
+# For local browser automation features (ChatGPT, YouTube, WhatsApp)
+playwright==1.49.0
 # No other dependencies — Claustrum runs on stdlib + local LLM
 # Install ollama from https://ollama.com
 # Then: ollama pull llama3.2
