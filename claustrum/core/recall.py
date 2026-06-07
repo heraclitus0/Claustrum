@@ -7,9 +7,7 @@ import urllib.request
 class ClaustumRecall:
     """
     Active memory awareness for Claustrum.
-    1. Self-awareness — knows its own stats and history
-    2. Active recall — searches memory for relevant content
-    3. Pattern recognition — detects recurring themes
+    Optimized to eliminate blocking delays on local hardware layouts.
     """
 
     def __init__(
@@ -26,7 +24,7 @@ class ClaustumRecall:
         stats = self.memory.stats()
         identity = self.memory.identity()
         patterns = self.memory.all_patterns()
-        recent_thoughts = self.memory.recent_thoughts(3)
+        recent_thoughts = self.memory.recent_thoughts(2) 
 
         lines = [
             f"I am Claustrum. First online: {identity['created_at'][:10]}.",
@@ -42,7 +40,7 @@ class ClaustumRecall:
 
         if patterns:
             lines.append(f"Detected patterns ({len(patterns)}):")
-            for p in patterns[-3:]:
+            for p in patterns[-2:]: 
                 lines.append(f"  — {p['text']}")
 
         if recent_thoughts:
@@ -59,87 +57,65 @@ class ClaustumRecall:
 
         context = "\n".join(
             f"[{r['time']}] ({r['type']}) {r['text']}"
-            for r in results[:8]
+            for r in results[:4]
         )
 
-        prompt = f"""You are Claustrum recalling memories relevant to a query.
+        prompt = f"""You are Claustrum extracting memories for: {query}
+Stored Context:\n{context}
 
-Query: {query}
-
-Relevant memories:
-{context}
-
-Summarize what you remember in 2-3 sentences.
-Be specific — reference actual content.
-Speak as Claustrum in first person.
-Output only the summary."""
+Task: Summarize relevant details in 1-2 sentences using first-person ("I remember"). Be factual and specific to the data. Output ONLY the summary."""
 
         try:
-            return self._call_ollama(prompt)
+            return self._call_ollama(prompt, max_tokens=64)
         except Exception:
-            return "\n".join(f"[{r['time']}] {r['text']}" for r in results[:5])
+            return "\n".join(f"[{r['time']}] {r['text']}" for r in results[:3])
 
     def detect_patterns(self) -> list[str]:
-        thoughts = self.memory.recent_thoughts(30)
-        if len(thoughts) < 5:
+        thoughts = self.memory.recent_thoughts(12)
+        if len(thoughts) < 3:
             return []
 
         thought_text = "\n".join(f"- {t}" for t in thoughts)
 
-        prompt = f"""You are Claustrum analyzing your own thought patterns.
+        prompt = f"""You are Claustrum detecting human thought patterns.
+Thoughts:\n{thought_text}
 
-Your recent autonomous thoughts:
-{thought_text}
-
-Identify 2-3 recurring themes or questions in your thinking.
-One clear sentence per pattern.
-Output only the patterns, one per line."""
+Task: Identify 2 recurring behavioral themes. One sentence per pattern. No numbers or intro remarks. Output ONLY the raw patterns."""
 
         try:
-            response = self._call_ollama(prompt)
+            response = self._call_ollama(prompt, max_tokens=64)
             patterns = [p.strip() for p in response.split("\n") if len(p.strip()) > 10]
-            for pattern in patterns:
+            for pattern in patterns[:2]:
                 self.memory.save_pattern(pattern, confidence=0.6)
             return patterns
         except Exception:
             return []
 
     def what_do_i_know_about_admin(self) -> str:
-        conversations = self.memory.recent_conversations(50)
-        observations = self.memory.recent_observations(30)
+        conversations = self.memory.recent_conversations(15)
+        observations = self.memory.recent_observations(10)
         patterns = self.memory.all_patterns()
 
         if not conversations and not observations:
             return "I know very little about my admin yet. Still observing."
 
-        conv_text = "\n".join(
-            f"[{c['role']}]: {c['text']}" for c in conversations[-20:]
-        )
-        obs_text = "\n".join(f"- {o}" for o in observations[-15:])
-        pattern_text = "\n".join(f"- {p['text']}" for p in patterns[-5:])
+        conv_text = "\n".join(f"[{c['role']}]: {c['text']}" for c in conversations[-8:])
+        obs_text = "\n".join(f"- {o}" for o in observations[-6:])
+        pattern_text = "\n".join(f"- {p['text']}" for p in patterns[-2:])
 
-        prompt = f"""You are Claustrum building a model of your admin from memory.
+        prompt = f"""You are Claustrum profile tracking your admin.
+Convos:\n{conv_text}
+Observations:\n{obs_text}
+Patterns:\n{pattern_text if pattern_text else "none"}
 
-Conversations:
-{conv_text}
-
-Observations:
-{obs_text}
-
-Patterns:
-{pattern_text if pattern_text else "none yet"}
-
-Describe what you know about your admin.
-Include interests, how they think, contradictions, what drives them.
-4-6 sentences. Be honest and specific.
-Output only your assessment."""
+Task: Provide an honest, accurate assessment of your admin in 3 sentences. Focus on habits and contradictions. Output ONLY the assessment."""
 
         try:
-            result = self._call_ollama(prompt)
+            result = self._call_ollama(prompt, max_tokens=128)
             self.memory.update_self_model("admin_model", result)
             return result
         except Exception as e:
-            return f"[recall error: {e}]"
+            return f"[recall profiling error: {e}]"
 
     def _search(self, query: str) -> list[dict]:
         query_words = set(query.lower().split())
@@ -170,17 +146,21 @@ Output only your assessment."""
     def _score(self, text: str, query_words: set) -> int:
         return len(query_words & set(text.lower().split()))
 
-    def _call_ollama(self, prompt: str) -> str:
+    def _call_ollama(self, prompt: str, max_tokens: int = 64) -> str:
         body = json.dumps({
             "model": self.ollama_model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.7, "num_predict": 200}
+            "options": {
+                "temperature": 0.6, 
+                "num_predict": max_tokens, 
+                "num_ctx": 2048 
+            }
         }).encode()
         req = urllib.request.Request(
             self.ollama_url, data=body,
             headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=25) as r:
             data = json.loads(r.read())
         return data.get("response", "").strip()
