@@ -12,7 +12,7 @@ from claustrum.core.heartbeat import Heartbeat
 from claustrum.tools.executor import ToolExecutor
 from claustrum.tools.code_runner import CodeRunner
 from claustrum.tools.files import FileOps
-from claustrum.tools.web_search import WebSearch
+from claustrum.tools.search import WebSearch
 from claustrum.tools.browser_agent import BrowserAgent # <-- IMPORT THE NEW AGENT
 
 
