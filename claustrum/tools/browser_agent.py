@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+import urllib.parse
 from typing import Literal
 
 class BrowserAgent:
