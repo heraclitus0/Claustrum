@@ -25,6 +25,7 @@ class CodeRunner:
     def generate_code(self, task: str) -> str:
         """Generate optimized Python code for a given task."""
         
+        # Swapped to an explicit inline systemic template to decrease context window backpressure
         prompt = f"""Task: Write a clean, complete Python script to execute the following requirements:
 "{task}"
 
