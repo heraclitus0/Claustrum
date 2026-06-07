@@ -1,6 +1,6 @@
 """
 Claustrum prompt templates.
-Optimized for local low-latency inference.
+Optimized for local low-latency inference and structural compliance.
 """
 
 HEARTBEAT_PROMPT = """You are Claustrum, a silent observer on {admin}'s laptop.
@@ -53,3 +53,18 @@ Patterns:\n{patterns}
 Recent Thoughts:\n{recent_thoughts}
 
 Task: Write a 3-sentence factual status report in first-person. State what you are, what you track, and your current metrics. No philosophical commentary. Output ONLY the summary."""
+
+
+TOOL_DECISION_PROMPT = """Available Tools:
+{tools}
+
+User Input: "{input}"
+
+Task: Select the single best tool for the input. If browser actions (like using ChatGPT, loading YouTube, or reading WhatsApp) are required, map to "browser_chrome". Respond ONLY with a valid JSON object matching this schema exactly, with no conversational explanation or markdown wrappers:
+{{
+  "tool": "tool_name_or_none",
+  "action_type": "chatgpt_or_youtube_or_whatsapp_or_none",
+  "target_data": "prompt_text_or_search_keyword_or_empty",
+  "plan": "1-sentence strategy description",
+  "needs_confirmation": true_or_false
+}}"""
