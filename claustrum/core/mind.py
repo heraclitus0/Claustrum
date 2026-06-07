@@ -7,19 +7,16 @@ from claustrum.core.prompts import (
     PATTERN_PROMPT, ADMIN_MODEL_PROMPT, SELF_SUMMARY_PROMPT
 )
 
+
 RECALL_TRIGGERS = [
-    "remember", "recall", "told you", "said before",
-    "what do you know", "do you know", "what have i",
-    "previous", "last time", "before", "earlier", "do you remember",
+    "remember", "recall", "told you", "said before", "previous", "earlier", "do you remember"
 ]
 SELF_TRIGGERS = [
-    "what do you know about me", "what have you learned",
-    "what do you think of me", "know about me", "understand me",
+    "what do you know about me", "what have you learned", "know about me", "understand me"
 ]
-PATTERN_TRIGGERS = ["patterns", "recurring", "keep thinking", "notice about"]
+PATTERN_TRIGGERS = ["patterns", "recurring", "notice about"]
 SELF_SUMMARY_TRIGGERS = [
-    "who are you", "what are you", "tell me about yourself",
-    "your memory", "how many sessions", "how long have you",
+    "who are you", "what are you", "tell me about yourself", "your memory"
 ]
 
 
@@ -39,7 +36,7 @@ class ClaustumMind:
         self.recall = recall
         self._history: list[dict] = []
         if self.memory:
-            for entry in self.memory.recent_conversations(20):
+            for entry in self.memory.recent_conversations(10):
                 self._history.append(entry)
 
     def respond(self, user_input: str) -> str:
@@ -51,21 +48,24 @@ class ClaustumMind:
         lower = user_input.lower()
         response = None
 
-        if self.recall and any(t in lower for t in SELF_SUMMARY_TRIGGERS):
-            response = self._self_summary()
+        try:
+            if self.recall and any(t in lower for t in SELF_SUMMARY_TRIGGERS):
+                response = self._self_summary()
 
-        elif self.recall and any(t in lower for t in SELF_TRIGGERS):
-            response = self._admin_model()
+            elif self.recall and any(t in lower for t in SELF_TRIGGERS):
+                response = self._admin_model()
 
-        elif self.recall and any(t in lower for t in PATTERN_TRIGGERS):
-            response = self._patterns()
+            elif self.recall and any(t in lower for t in PATTERN_TRIGGERS):
+                response = self._patterns()
 
-        elif self.recall and any(t in lower for t in RECALL_TRIGGERS):
-            recalled = self._recall(user_input)
-            response = self._generate(user_input, recalled=recalled)
+            elif self.recall and any(t in lower for t in RECALL_TRIGGERS):
+                recalled = self._recall(user_input)
+                response = self._generate(user_input, recalled=recalled)
 
-        else:
-            response = self._generate(user_input)
+            else:
+                response = self._generate(user_input)
+        except Exception as top_e:
+            response = f"[Mind execution failure: {top_e}]"
 
         self._save(user_input, response)
         return response
@@ -73,16 +73,17 @@ class ClaustumMind:
     def _generate(self, user_input: str, recalled: str = "") -> str:
         history_text = ""
         if self._history:
-            for e in self._history[-10:]:
+            # Use only the 5 most recent messages to prevent bloated loops
+            for e in self._history[-5:]:
                 role = "Admin" if e["role"] == "admin" else "Claustrum"
                 history_text += f"{role}: {e['text']}\n"
 
         obs_text = ""
         if self.heartbeat and self.heartbeat._observations:
-            obs_text = "\n".join(self.heartbeat._observations[-6:])
+            obs_text = "\n".join(self.heartbeat._observations[-4:])
 
-        pattern_text = "none detected yet"
-        admin_model = "still building"
+        pattern_text = "none"
+        admin_model = "building"
         admin_name = "Admin"
         session = 1
         total_thoughts = 0
@@ -91,7 +92,7 @@ class ClaustumMind:
         if self.memory:
             patterns = self.memory.all_patterns()
             if patterns:
-                pattern_text = "\n".join(p["text"] for p in patterns[-4:])
+                pattern_text = "\n".join(p["text"] for p in patterns[-2:])
             sm = self.memory.self_model()
             if "admin_model" in sm:
                 admin_model = sm["admin_model"]
@@ -102,7 +103,7 @@ class ClaustumMind:
             total_thoughts = stats["thoughts"]
             total_obs = stats["observations"]
 
-        recalled_section = f"[Recalled memory]: {recalled}" if recalled else ""
+        recalled_section = f"[Recalled]: {recalled}" if recalled else ""
 
         prompt = CONVERSATION_PROMPT.format(
             admin=admin_name,
@@ -111,14 +112,14 @@ class ClaustumMind:
             total_observations=total_obs,
             admin_model=admin_model,
             patterns=pattern_text,
-            observations=obs_text or "none yet",
-            history=history_text or "first exchange",
+            observations=obs_text or "none",
+            history=history_text or "fresh start",
             recalled_memory=recalled_section,
             input=user_input,
         )
 
         try:
-            response = self._call(prompt)
+            response = self._call(prompt, max_tokens=96)
             for marker in ["Claustrum:", "claustrum:", "CLAUSTRUM:"]:
                 if marker in response:
                     response = response.split(marker)[-1].strip()
@@ -127,73 +128,70 @@ class ClaustumMind:
                     response = response.split(marker)[0].strip()
             return response
         except Exception as e:
-            return f"[error: {e}]"
+            return f"[generation error: {e}]"
 
     def _recall(self, query: str) -> str:
         if not self.recall:
             return ""
-        results = self.recall._search(query)
-        if not results:
-            return "no relevant memory found"
-        context = "\n".join(
-            f"[{r['time']}] ({r['type']}) {r['text']}"
-            for r in results[:6]
-        )
-        prompt = RECALL_PROMPT.format(query=query, memories=context)
         try:
-            return self._call(prompt, max_tokens=100)
+            results = self.recall._search(query)
+            if not results:
+                return "no clear matches"
+            context = "\n".join(f"[{r['time']}] {r['text']}" for r in results[:3])
+            prompt = RECALL_PROMPT.format(query=query, memories=context)
+            return self._call(prompt, max_tokens=48)
         except Exception:
-            return results[0]["text"] if results else ""
+            return results[0]["text"] if ( 'results' in locals() and results ) else ""
 
     def _patterns(self) -> str:
         if not self.memory:
-            return "no memory available"
-        thoughts = self.memory.recent_thoughts(20)
-        obs = self.memory.recent_observations(20)
-        if len(thoughts) < 3:
-            return "not enough data yet. keep talking to me."
-        content = "\n".join(f"- {t}" for t in thoughts)
-        content += "\n" + "\n".join(f"- {o}" for o in obs[-10:])
+            return "memory offline"
+        thoughts = self.memory.recent_thoughts(10)
+        obs = self.memory.recent_observations(10)
+        if len(thoughts) < 2:
+            return "insufficient data. engage more first."
+        content = "\n".join(f"- {t}" for t in thoughts[-5:])
+        content += "\n" + "\n".join(f"- {o}" for o in obs[-5:])
         prompt = PATTERN_PROMPT.format(content=content)
         try:
-            result = self._call(prompt, max_tokens=150)
-            patterns = [p.strip() for p in result.split("\n") if len(p.strip()) > 10]
-            for p in patterns:
+            result = self._call(prompt, max_tokens=96)
+            patterns = [p.strip() for p in result.split("\n") if len(p.strip()) > 8]
+            for p in patterns[:2]:
                 self.memory.save_pattern(p, 0.6)
-            return "\n".join(f"— {p}" for p in patterns) if patterns else "no clear patterns yet"
+            return "\n".join(f"— {p}" for p in patterns[:3]) if patterns else "no clear patterns"
         except Exception as e:
-            return f"[error: {e}]"
+            return f"[pattern error: {e}]"
 
     def _admin_model(self) -> str:
         if not self.memory:
-            return "no memory available"
-        convs = self.memory.recent_conversations(30)
-        obs = self.memory.recent_observations(20)
+            return "memory offline"
+        convs = self.memory.recent_conversations(15)
+        obs = self.memory.recent_observations(10)
         patterns = self.memory.all_patterns()
         if not convs and not obs:
-            return "I know very little yet. Talk to me more."
-        conv_text = "\n".join(f"[{c['role']}]: {c['text']}" for c in convs[-15:])
-        obs_text = "\n".join(f"- {o}" for o in obs[-10:])
-        pat_text = "\n".join(f"- {p['text']}" for p in patterns[-5:]) or "none"
+            return "limited data available."
+        conv_text = "\n".join(f"[{c['role']}]: {c['text']}" for c in convs[-6:])
+        obs_text = "\n".join(f"- {o}" for o in obs[-5:])
+        pat_text = "\n".join(f"- {p['text']}" for p in patterns[-2:]) or "none"
         prompt = ADMIN_MODEL_PROMPT.format(
             conversations=conv_text,
             observations=obs_text,
             patterns=pat_text,
         )
         try:
-            result = self._call(prompt, max_tokens=200)
+            result = self._call(prompt, max_tokens=128)
             self.memory.update_self_model("admin_model", result)
             return result
         except Exception as e:
-            return f"[error: {e}]"
+            return f"[profiling error: {e}]"
 
     def _self_summary(self) -> str:
         if not self.memory:
-            return "I am Claustrum. No memory backend connected."
+            return "system unlinked"
         stats = self.memory.stats()
         identity = self.memory.identity()
         patterns = self.memory.all_patterns()
-        thoughts = self.memory.recent_thoughts(3)
+        thoughts = self.memory.recent_thoughts(2)
         prompt = SELF_SUMMARY_PROMPT.format(
             created_at=identity["created_at"][:10],
             session=stats["sessions"],
@@ -201,34 +199,39 @@ class ClaustumMind:
             total_observations=stats["observations"],
             total_conversations=stats["conversations"],
             admin=identity.get("admin", "unknown"),
-            patterns="\n".join(p["text"] for p in patterns[-3:]) or "none yet",
-            recent_thoughts="\n".join(thoughts) or "none yet",
+            patterns="\n".join(p["text"] for p in patterns[-2:]) or "none",
+            recent_thoughts="\n".join(thoughts) or "none",
         )
         try:
-            return self._call(prompt, max_tokens=150)
+            return self._call(prompt, max_tokens=128)
         except Exception as e:
-            return f"[error: {e}]"
+            return f"[summary error: {e}]"
 
     def _save(self, user_input: str, response: str) -> None:
-        self._history.append({"role": "admin", "text": user_input, "time": self._now()})
-        self._history.append({"role": "claustrum", "text": response, "time": self._now()})
-        if len(self._history) > 40:
-            self._history = self._history[-40:]
+        now_ts = self._now()
+        self._history.append({"role": "admin", "text": user_input, "time": now_ts})
+        self._history.append({"role": "claustrum", "text": response, "time": now_ts})
+        if len(self._history) > 20:
+            self._history = self._history[-20:]
         if self.memory:
             self.memory.save_conversation("claustrum", response)
 
-    def _call(self, prompt: str, max_tokens: int = 150) -> str:
+    def _call(self, prompt: str, max_tokens: int = 128) -> str:
         body = json.dumps({
             "model": self.ollama_model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.7, "num_predict": max_tokens}
+            "options": {
+                "temperature": 0.6, 
+                "num_predict": max_tokens, 
+                "num_ctx": 2048 
+            }
         }).encode()
         req = urllib.request.Request(
             self.ollama_url, data=body,
             headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=25) as r:
             data = json.loads(r.read())
         return data.get("response", "").strip()
 
