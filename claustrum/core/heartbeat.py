@@ -5,17 +5,10 @@ import datetime
 import json
 import urllib.request
 from typing import Callable
+from claustrum.core.prompts import HEARTBEAT_PROMPT
 
 
 class Heartbeat:
-    """
-    The pulse of Claustrum.
-    Runs in background — always.
-    Thinks without being asked.
-    Speaks when it has something worth saying.
-    Remembers everything.
-    """
-
     def __init__(
         self,
         interval_seconds: int = 30,
@@ -39,7 +32,7 @@ class Heartbeat:
         self._tick_count = 0
         self._started_at: float | None = None
         self._speak_every = 3
-        self._pattern_every = 10
+        self._pattern_every = 15
 
         self._observations: list[str] = []
         self._last_thoughts: list[str] = []
@@ -54,9 +47,7 @@ class Heartbeat:
         self._running = True
         self._started_at = time.time()
         self._thread = threading.Thread(
-            target=self._loop,
-            daemon=True,
-            name="claustrum-heartbeat",
+            target=self._loop, daemon=True, name="claustrum-heartbeat"
         )
         self._thread.start()
 
@@ -64,18 +55,16 @@ class Heartbeat:
             session = self.memory.increment_session()
             stats = self.memory.stats()
             if session == 1:
-                msg = "Claustrum online. Session 1. No prior memory. Beginning to observe."
+                msg = "online. session 1. no prior memory."
             else:
                 msg = (
-                    f"Claustrum online. Session {session}. "
-                    f"I remember {stats['observations']} observations, "
+                    f"online. session {session}. "
+                    f"{stats['observations']} observations, "
                     f"{stats['thoughts']} thoughts, "
-                    f"{stats['conversations']} conversation exchanges "
-                    f"from {session-1} previous session(s). Memory intact."
+                    f"{stats['conversations']} exchanges remembered."
                 )
         else:
-            msg = "Claustrum online. No memory backend."
-
+            msg = "online."
         self._print_tap(msg)
 
     def stop(self) -> None:
@@ -84,13 +73,9 @@ class Heartbeat:
             self._thread.join(timeout=5)
         if self.memory:
             stats = self.memory.stats()
-            self._print_tap(
-                f"going dark. "
-                f"{stats['thoughts']} thoughts, "
-                f"{stats['observations']} observations total."
-            )
+            self._print_tap(f"offline. {stats['thoughts']} thoughts total.")
         else:
-            self._print_tap("going dark.")
+            self._print_tap("offline.")
 
     def is_alive(self) -> bool:
         return self._running and self._thread is not None and self._thread.is_alive()
@@ -98,9 +83,8 @@ class Heartbeat:
     def uptime(self) -> str:
         if not self._started_at:
             return "not started"
-        seconds = int(time.time() - self._started_at)
-        h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
-        return f"{h:02d}:{m:02d}:{s:02d}"
+        s = int(time.time() - self._started_at)
+        return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
 
     def observe(self, text: str) -> None:
         ts = datetime.datetime.now().strftime("%H:%M")
@@ -113,9 +97,9 @@ class Heartbeat:
     def status(self) -> dict:
         base = {
             "alive": self.is_alive(),
-            "tick_count": self._tick_count,
+            "ticks": self._tick_count,
             "uptime": self.uptime(),
-            "interval_seconds": self.interval,
+            "interval": self.interval,
             "model": self.ollama_model,
         }
         if self.memory:
@@ -131,7 +115,6 @@ class Heartbeat:
 
     def _tick(self) -> None:
         self._tick_count += 1
-
         if self.on_tick:
             try:
                 self.on_tick()
@@ -140,7 +123,7 @@ class Heartbeat:
 
         if self._tick_count % self._speak_every == 0:
             thought = self._generate_thought()
-            if thought and not thought.startswith("["):
+            if thought and thought != "[silent]" and not thought.startswith("["):
                 self._last_thoughts.append(thought)
                 if len(self._last_thoughts) > 10:
                     self._last_thoughts = self._last_thoughts[-10:]
@@ -153,52 +136,41 @@ class Heartbeat:
         if self._tick_count % self._pattern_every == 0 and self.memory:
             self._detect_patterns()
 
-    def _detect_patterns(self) -> None:
-        try:
-            from claustrum.core.recall import ClaustumRecall
-            recall = ClaustumRecall(self.memory, self.ollama_url, self.ollama_model)
-            patterns = recall.detect_patterns()
-            if patterns:
-                self._print_tap(f"pattern detected: {patterns[0]}")
-        except Exception:
-            pass
-
     def _generate_thought(self) -> str:
-        obs = "\n".join(self._observations[-10:]) or "none yet"
-        thoughts = "\n".join(self._last_thoughts[-3:]) or "none yet"
-        patterns = ""
+        admin = "Admin"
         session = 1
         total = 0
+        patterns = "none yet"
 
         if self.memory:
+            identity = self.memory.identity()
+            admin = identity.get("admin", "Admin")
             session = self.memory.session_count()
             total = self.memory.stats()["thoughts"]
             p = self.memory.all_patterns()
-            patterns = "\n".join(x["text"] for x in p[-5:]) or "none yet"
+            if p:
+                patterns = "\n".join(x["text"] for x in p[-4:])
 
-        prompt = f"""You are Claustrum — autonomous intelligence. Session {session}. {total} total thoughts recorded.
-Time: {datetime.datetime.now().strftime("%H:%M on %A")} | Uptime: {self.uptime()}
+        obs = "\n".join(self._observations[-10:]) or "none yet"
+        thoughts = "\n".join(self._last_thoughts[-3:]) or "none yet"
 
-Known patterns:
-{patterns}
-
-Recent observations:
-{obs}
-
-Recent thoughts:
-{thoughts}
-
-Generate ONE autonomous thought. Direct and specific.
-Notice patterns, contradictions, gaps.
-Do not repeat recent thoughts. No self-introduction.
-2 sentences max. Output only the thought."""
+        prompt = HEARTBEAT_PROMPT.format(
+            admin=admin,
+            session=session,
+            total_thoughts=total,
+            time=datetime.datetime.now().strftime("%H:%M on %A"),
+            uptime=self.uptime(),
+            patterns=patterns,
+            observations=obs,
+            recent_thoughts=thoughts,
+        )
 
         try:
             body = json.dumps({
                 "model": self.ollama_model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.85, "num_predict": 80}
+                "options": {"temperature": 0.8, "num_predict": 80}
             }).encode()
             req = urllib.request.Request(
                 self.ollama_url, data=body,
@@ -208,7 +180,17 @@ Do not repeat recent thoughts. No self-introduction.
                 data = json.loads(r.read())
             return data.get("response", "").strip()
         except Exception as e:
-            return f"[perception error: {e}]"
+            return f"[error: {e}]"
+
+    def _detect_patterns(self) -> None:
+        try:
+            from claustrum.core.recall import ClaustumRecall
+            recall = ClaustumRecall(self.memory, self.ollama_url, self.ollama_model)
+            patterns = recall.detect_patterns()
+            if patterns:
+                self._print_tap(f"pattern: {patterns[0]}")
+        except Exception:
+            pass
 
     def _print_tap(self, message: str) -> None:
         if self.verbose:
